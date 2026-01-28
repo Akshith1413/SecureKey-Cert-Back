@@ -111,9 +111,10 @@ router.post('/', protect, checkPermission('create_certs'), async (req, res) => {
     const userTrustAuthorityId = trustAuthorityId || req.user.trustAuthorityId;
 
     if (!userTrustAuthorityId) {
+      console.error(`[CREATE CERT ERROR] User ${req.user.email} (${req.user._id}) has no trustAuthorityId`);
       return res.status(400).json({
         success: false,
-        message: 'No trust authority assigned. Please contact administrator.',
+        message: `No trust authority assigned to your account. Please contact administrator to assign a trust authority.`,
       });
     }
     const certificateHash = hashData(certificateData);

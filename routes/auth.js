@@ -554,6 +554,7 @@ router.post('/mfa/verify', protect, async (req, res) => {
 
     const user = await User.findById(req.user._id);
     user.mfaEnabled = true;
+    user.mfaType = 'totp';  // Explicitly set to 'totp' for authenticator app
     user.mfaSecret = secret;
     user.mfaBackupCodes = backupCodes;
     await user.save();
@@ -594,6 +595,8 @@ router.post('/mfa/validate', async (req, res) => {
         message: 'MFA not enabled for this user',
       });
     }
+
+    console.log(`[MFA VALIDATE] User: ${user.email}, MFA Type: ${user.mfaType}, Has Secret: ${!!user.mfaSecret}`);
 
     let isValid = false;
 
