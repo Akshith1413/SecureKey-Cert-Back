@@ -32,17 +32,23 @@ const sendEmail = async (to, subject, html) => {
     try {
       console.log(`[EMAILJS DEBUG] Attempting to send via EmailJS API...`);
       console.log(`[EMAILJS DEBUG] Service: ${process.env.EMAILJS_SERVICE_ID}, Template: ${process.env.EMAILJS_TEMPLATE_ID}`);
+      // Extract OTP from HTML (regex) or pass generic code if not found
+      const otpCode = html.match(/>\s*([0-9]{6})\s*</)?.[1] || "CODE";
 
       const emailJsPayload = {
         service_id: process.env.EMAILJS_SERVICE_ID,
         template_id: process.env.EMAILJS_TEMPLATE_ID,
         user_id: process.env.EMAILJS_PUBLIC_KEY,
-        accessToken: process.env.EMAILJS_PRIVATE_KEY, // Optional but recommended
+        accessToken: process.env.EMAILJS_PRIVATE_KEY,
         template_params: {
           to_email: to,
+          to_name: to.split('@')[0], // Use part of email as name since we don't pass name to this helper
+          otp: otpCode,
+          app_name: "SCKLMS",
+          expiry_minutes: "10",
+          // Keep these just in case other templates use them:
           subject: subject,
-          message: html, // Template must use {{{message}}} for HTML or {{message}} for text
-          otp_code: html.match(/>\s*([0-9]{6})\s*</)?.[1] || "CODE", // Try to extract OTP for simpler templates
+          message: html,
         }
       };
 
