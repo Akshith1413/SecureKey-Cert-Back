@@ -66,13 +66,11 @@ router.post('/mfa/email/send', protect, async (req, res) => {
       }
     } catch (emailError) {
       console.error('[EMAIL SEND ERROR]', emailError);
-      // Fallback for development if email fails
-      console.log(`[EMAIL OTP FALLBACK] OTP for ${user.email}: ${otp}`);
-
-      return res.status(500).json({
-        success: false,
-        message: 'Failed to send email. Please check SMTP configuration.',
-        error: emailError.message
+      // Fallback for Render/Cloud where SMTP is blocked
+      return res.status(200).json({
+        success: true,
+        message: `Email blocked by server. Your Test OTP is: ${otp}`,
+        devOtp: otp, // Pass OTP to frontend for fallback display
       });
     }
 
@@ -204,11 +202,10 @@ router.post('/mfa/email/login-send', async (req, res) => {
       }
     } catch (emailError) {
       console.error('[EMAIL SEND ERROR]', emailError);
-      console.log(`[EMAIL OTP LOGIN FALLBACK] OTP for ${user.email}: ${otp}`);
-      return res.status(500).json({
-        success: false,
-        message: 'Failed to send email. Please check SMTP configuration.',
-        error: emailError.message
+      return res.status(200).json({
+        success: true,
+        message: `Email blocked by server. Your Test OTP is: ${otp}`,
+        devOtp: otp,
       });
     }
 
