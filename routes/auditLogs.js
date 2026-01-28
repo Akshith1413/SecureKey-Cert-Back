@@ -215,6 +215,32 @@ router.get('/export', protect, authorize('auditor', 'security_authority'), async
   }
 });
 
+
+
+// @route   GET /api/audit-logs/me
+// @desc    Get recent audit logs for the current user
+// @access  Private
+router.get('/me', protect, async (req, res) => {
+  try {
+    const { limit = 10 } = req.query;
+    console.log(`[AUDIT DEBUG] Fetching logs for user: ${req.user._id}`);
+    const logs = await AuditLog.find({ userId: req.user._id })
+      .sort({ createdAt: -1 })
+      .limit(parseInt(limit));
+
+    res.status(200).json({
+      success: true,
+      data: logs
+    });
+  } catch (error) {
+    console.error('[MY LOGS ERROR]', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch your logs'
+    });
+  }
+});
+
 // @route   GET /api/audit-logs/stats/summary
 // @desc    Get audit logs summary statistics
 // @access  Private
@@ -264,6 +290,69 @@ router.get('/stats/summary', protect, authorize('auditor', 'security_authority')
     res.status(500).json({
       success: false,
       message: 'Failed to fetch audit statistics',
+    });
+  }
+});
+
+// @route   GET /api/audit-logs/stats/mine
+// @desc    Get audit logs summary statistics for the current user (dashboard graph)
+// @access  Private
+router.get('/stats/mine', protect, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+    sevenDaysAgo.setHours(0, 0, 0, 0);
+
+    // Aggregate logs by day for the last 7 days
+    const stats = await AuditLog.aggregate([
+      {
+        $match: {
+          userId: userId,
+          createdAt: { $gte: sevenDaysAgo }
+        }
+      },
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
+          count: { $sum: 1 },
+          actions: { $push: "$action" } // Optional: verify types of actions
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+
+    // Fill in missing days
+    const filledStats = [];
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+    for (let i = 0; i < 7; i++) {
+      const d = new Date();
+      d.setDate(d.getDate() - (6 - i));
+      const dateStr = d.toISOString().split('T')[0];
+      const dayName = days[d.getDay()];
+
+      const found = stats.find(s => s._id === dateStr);
+      filledStats.push({
+        name: dayName,
+        fullDate: dateStr,
+        activity: found ? found.count : 0,
+        // Mock data for "keys/certs" split since we only track general "activity" in audit logs easily
+        // In a real expanded version, we could filter by resourceType
+        certs: found ? found.actions.filter(a => a.toLowerCase().includes('cert')).length : 0,
+        keys: found ? found.actions.filter(a => a.toLowerCase().includes('key')).length : 0,
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: filledStats
+    });
+  } catch (error) {
+    console.error('[MY STATS ERROR]', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch your statistics'
     });
   }
 });
