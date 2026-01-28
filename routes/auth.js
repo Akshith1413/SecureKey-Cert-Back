@@ -7,8 +7,12 @@ import { logAudit } from '../utils/auditLogger.js';
 import { protect } from '../middleware/auth.js';
 import TrustAuthority from '../models/TrustAuthority.js';
 import nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 
-// Configure Nodemailer
+// Configure Resend (for cloud deployments where SMTP is blocked)
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+
+// Configure Nodemailer (fallback for local development or paid Render)
 const transporter = nodemailer.createTransport({
   host: process.env.EMAIL_HOST,
   port: process.env.EMAIL_PORT,
@@ -20,6 +24,47 @@ const transporter = nodemailer.createTransport({
 });
 
 const router = express.Router();
+
+// Helper function to send email via Resend or Nodemailer
+const sendEmail = async (to, subject, html) => {
+  // Try Resend first (works on cloud)
+  if (resend) {
+    try {
+      const result = await resend.emails.send({
+        from: process.env.RESEND_FROM || 'SCKLMS <onboarding@resend.dev>',
+        to: to,
+        subject: subject,
+        html: html,
+      });
+      console.log(`[EMAIL] Sent via Resend to ${to}`, result);
+      return { success: true, provider: 'resend' };
+    } catch (error) {
+      console.error('[RESEND ERROR]', error);
+      // Fall through to try nodemailer
+    }
+  }
+
+  // Fallback to nodemailer
+  if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+    try {
+      await transporter.sendMail({
+        from: process.env.EMAIL_FROM || '"SCKLMS Security" <noreply@scklms.com>',
+        to: to,
+        subject: subject,
+        html: html,
+      });
+      console.log(`[EMAIL] Sent via SMTP to ${to}`);
+      return { success: true, provider: 'smtp' };
+    } catch (error) {
+      console.error('[SMTP ERROR]', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  return { success: false, error: 'No email provider configured' };
+};
+
+
 
 
 
@@ -41,45 +86,38 @@ router.post('/mfa/email/send', protect, async (req, res) => {
     };
     await user.save();
 
-    // Send email
-    try {
-      if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
-        await transporter.sendMail({
-          from: process.env.EMAIL_FROM || '"SCKLMS Security" <noreply@scklms.com>',
-          to: user.email,
-          subject: 'Your SCKLMS Verification Code',
-          html: `
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-              <h2 style="color: #00bcd4;">Security Verification</h2>
-              <p>Your verification code for SCKLMS is:</p>
-              <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; text-align: center; font-size: 24px; font-weight: bold; letter-spacing: 5px; margin: 20px 0;">
-                ${otp}
-              </div>
-              <p>This code will expire in 10 minutes.</p>
-              <p style="color: #888; font-size: 12px; margin-top: 30px;">If you didn't request this code, please contact your administrator immediately.</p>
-            </div>
-          `,
-        });
-        console.log(`[EMAIL OTP] Sent to ${user.email}`);
-      } else {
-        console.log(`[EMAIL OTP] SMTP not configured. OTP for ${user.email}: ${otp}`);
-      }
-    } catch (emailError) {
-      console.error('[EMAIL SEND ERROR]', emailError);
-      // Fallback for Render/Cloud where SMTP is blocked
-      return res.status(200).json({
+    // Build email HTML
+    const emailHtml = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #00bcd4;">Security Verification</h2>
+        <p>Your verification code for SCKLMS is:</p>
+        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; text-align: center; font-size: 24px; font-weight: bold; letter-spacing: 5px; margin: 20px 0;">
+          ${otp}
+        </div>
+        <p>This code will expire in 10 minutes.</p>
+        <p style="color: #888; font-size: 12px; margin-top: 30px;">If you didn't request this code, please contact your administrator immediately.</p>
+      </div>
+    `;
+
+    // Send email using Resend (cloud) or SMTP (local)
+    const emailResult = await sendEmail(user.email, 'Your SCKLMS Verification Code', emailHtml);
+
+    if (emailResult.success) {
+      res.status(200).json({
         success: true,
-        message: `Email blocked by server. Your Test OTP is: ${otp}`,
-        devOtp: otp, // Pass OTP to frontend for fallback display
+        message: 'OTP sent to your email',
+        provider: emailResult.provider,
+      });
+    } else {
+      // Email failed - return OTP for manual entry (fallback)
+      console.log(`[EMAIL FALLBACK] Email failed, returning OTP for ${user.email}: ${otp}`);
+      res.status(200).json({
+        success: true,
+        message: 'Email service unavailable. Use the code shown below.',
+        devOtp: otp,
+        emailError: emailResult.error,
       });
     }
-
-    res.status(200).json({
-      success: true,
-      message: 'OTP sent to your email',
-      // In development, include OTP for testing
-      devOtp: process.env.NODE_ENV === 'development' ? otp : undefined,
-    });
   } catch (error) {
     console.error('[EMAIL OTP SEND ERROR]', error);
     res.status(500).json({
@@ -177,43 +215,38 @@ router.post('/mfa/email/login-send', async (req, res) => {
     };
     await user.save();
 
-    // Send email
-    try {
-      if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
-        await transporter.sendMail({
-          from: process.env.EMAIL_FROM || '"SCKLMS Security" <noreply@scklms.com>',
-          to: user.email,
-          subject: 'Your SCKLMS Login Verification Code',
-          html: `
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-              <h2 style="color: #00bcd4;">Login Verification</h2>
-              <p>Your login verification code for SCKLMS is:</p>
-              <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; text-align: center; font-size: 24px; font-weight: bold; letter-spacing: 5px; margin: 20px 0;">
-                ${otp}
-              </div>
-              <p>This code will expire in 10 minutes.</p>
-              <p style="color: #888; font-size: 12px; margin-top: 30px;">If you didn't request this code, please change your password immediately.</p>
-            </div>
-          `,
-        });
-        console.log(`[EMAIL OTP LOGIN] Sent to ${user.email}`);
-      } else {
-        console.log(`[EMAIL OTP LOGIN] SMTP not configured. OTP for ${user.email}: ${otp}`);
-      }
-    } catch (emailError) {
-      console.error('[EMAIL SEND ERROR]', emailError);
-      return res.status(200).json({
+    // Build email HTML
+    const emailHtml = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #00bcd4;">Login Verification</h2>
+        <p>Your login verification code for SCKLMS is:</p>
+        <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; text-align: center; font-size: 24px; font-weight: bold; letter-spacing: 5px; margin: 20px 0;">
+          ${otp}
+        </div>
+        <p>This code will expire in 10 minutes.</p>
+        <p style="color: #888; font-size: 12px; margin-top: 30px;">If you didn't request this code, please change your password immediately.</p>
+      </div>
+    `;
+
+    // Send email using Resend (cloud) or SMTP (local)
+    const emailResult = await sendEmail(user.email, 'Your SCKLMS Login Verification Code', emailHtml);
+
+    if (emailResult.success) {
+      res.status(200).json({
         success: true,
-        message: `Email blocked by server. Your Test OTP is: ${otp}`,
+        message: 'OTP sent to your email',
+        provider: emailResult.provider,
+      });
+    } else {
+      // Email failed - return OTP for manual entry (fallback)
+      console.log(`[EMAIL FALLBACK] Login email failed, returning OTP for ${user.email}: ${otp}`);
+      res.status(200).json({
+        success: true,
+        message: 'Email service unavailable. Use the code shown below.',
         devOtp: otp,
+        emailError: emailResult.error,
       });
     }
-
-    res.status(200).json({
-      success: true,
-      message: 'OTP sent to your email',
-      devOtp: process.env.NODE_ENV === 'development' ? otp : undefined,
-    });
   } catch (error) {
     console.error('[EMAIL OTP LOGIN SEND ERROR]', error);
     res.status(500).json({
