@@ -7,12 +7,9 @@ import { logAudit } from '../utils/auditLogger.js';
 import { protect } from '../middleware/auth.js';
 import TrustAuthority from '../models/TrustAuthority.js';
 import nodemailer from 'nodemailer';
-import { Resend } from 'resend';
+import axios from 'axios';
 
-// Configure Resend (for cloud deployments where SMTP is blocked)
-const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
-
-// Configure Nodemailer (fallback for local development or paid Render)
+// Configure Nodemailer (fallback for local development)
 const transporter = nodemailer.createTransport({
   host: process.env.EMAIL_HOST,
   port: process.env.EMAIL_PORT,
@@ -25,43 +22,68 @@ const transporter = nodemailer.createTransport({
 
 const router = express.Router();
 
-// Helper function to send email via Resend or Nodemailer
+// Helper function to send email via EmailJS (Cloud) or Nodemailer (Local)
 const sendEmail = async (to, subject, html) => {
-  // Try Resend first (works on cloud)
-  if (resend) {
+  console.log(`[EMAIL DEBUG] Starting sendEmail to: ${to}`);
+
+  // 1. Try EmailJS (Best for Render Free Tier)
+  if (process.env.EMAILJS_SERVICE_ID && process.env.EMAILJS_TEMPLATE_ID && process.env.EMAILJS_PUBLIC_KEY) {
+    console.log(`[EMAIL DEBUG] EmailJS credentials found. Using EmailJS provider.`);
     try {
-      const result = await resend.emails.send({
-        from: process.env.RESEND_FROM || 'SCKLMS <onboarding@resend.dev>',
-        to: to,
-        subject: subject,
-        html: html,
-      });
-      console.log(`[EMAIL] Sent via Resend to ${to}`, result);
-      return { success: true, provider: 'resend' };
+      console.log(`[EMAILJS DEBUG] Attempting to send via EmailJS API...`);
+      console.log(`[EMAILJS DEBUG] Service: ${process.env.EMAILJS_SERVICE_ID}, Template: ${process.env.EMAILJS_TEMPLATE_ID}`);
+
+      const emailJsPayload = {
+        service_id: process.env.EMAILJS_SERVICE_ID,
+        template_id: process.env.EMAILJS_TEMPLATE_ID,
+        user_id: process.env.EMAILJS_PUBLIC_KEY,
+        accessToken: process.env.EMAILJS_PRIVATE_KEY, // Optional but recommended
+        template_params: {
+          to_email: to,
+          subject: subject,
+          message: html, // Template must use {{{message}}} for HTML or {{message}} for text
+          otp_code: html.match(/>\s*([0-9]{6})\s*</)?.[1] || "CODE", // Try to extract OTP for simpler templates
+        }
+      };
+
+      const response = await axios.post('https://api.emailjs.com/api/v1.0/email/send', emailJsPayload);
+      console.log(`[EMAILJS SUCCESS] Status: ${response.status} ${response.data}`);
+      return { success: true, provider: 'emailjs' };
+
     } catch (error) {
-      console.error('[RESEND ERROR]', error);
-      // Fall through to try nodemailer
+      console.error('[EMAILJS ERROR]', error.response?.data || error.message);
+      console.log('[EMAIL DEBUG] Falling back to SMTP...');
     }
+  } else {
+    console.log(`[EMAIL DEBUG] No EmailJS config found. Falling back to SMTP...`);
   }
 
-  // Fallback to nodemailer
+  // 2. Fallback to Nodemailer (SMTP)
   if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
     try {
+      console.log(`[SMTP DEBUG] Attempting SMTP send to ${to} via ${process.env.EMAIL_HOST}`);
       await transporter.sendMail({
         from: process.env.EMAIL_FROM || '"SCKLMS Security" <noreply@scklms.com>',
         to: to,
         subject: subject,
         html: html,
       });
-      console.log(`[EMAIL] Sent via SMTP to ${to}`);
+      console.log(`[SMTP SUCCESS] Sent via SMTP to ${to}`);
       return { success: true, provider: 'smtp' };
     } catch (error) {
-      console.error('[SMTP ERROR]', error);
-      return { success: false, error: error.message };
+      console.error('[SMTP ERROR] Connection failed:', error.message);
+      return { success: false, error: 'smtp_failed', details: error.message };
     }
   }
 
-  return { success: false, error: 'No email provider configured' };
+  // 3. Fallback: Simulating send (if configured to skip or if all else fails)
+  if (process.env.SKIP_SMTP === 'true') {
+    console.log(`[EMAIL] SKIP_SMTP=true. Simulating send to ${to}`);
+    return { success: true, provider: 'skipped', skipped: true };
+  }
+
+  console.error('[EMAIL ERROR] No valid email provider configured.');
+  return { success: false, error: 'not_configured' };
 };
 
 
@@ -99,15 +121,26 @@ router.post('/mfa/email/send', protect, async (req, res) => {
       </div>
     `;
 
-    // Send email using Resend (cloud) or SMTP (local)
+    // Send email using Nodemailer with hybrid fallback
     const emailResult = await sendEmail(user.email, 'Your SCKLMS Verification Code', emailHtml);
 
     if (emailResult.success) {
-      res.status(200).json({
-        success: true,
-        message: 'OTP sent to your email',
-        provider: emailResult.provider,
-      });
+      // If skipped (cloud), show specific message
+      if (emailResult.skipped) {
+        res.status(200).json({
+          success: true,
+          message: 'Verification status: Cloud Mode (Email Skipped). Use the code below.',
+          devOtp: otp,
+          provider: 'skipped'
+        });
+      } else {
+        // Normal SMTP success
+        res.status(200).json({
+          success: true,
+          message: 'OTP sent to your email',
+          provider: emailResult.provider,
+        });
+      }
     } else {
       // Email failed - return OTP for manual entry (fallback)
       console.log(`[EMAIL FALLBACK] Email failed, returning OTP for ${user.email}: ${otp}`);
@@ -228,15 +261,24 @@ router.post('/mfa/email/login-send', async (req, res) => {
       </div>
     `;
 
-    // Send email using Resend (cloud) or SMTP (local)
+    // Send email using Nodemailer with hybrid fallback
     const emailResult = await sendEmail(user.email, 'Your SCKLMS Login Verification Code', emailHtml);
 
     if (emailResult.success) {
-      res.status(200).json({
-        success: true,
-        message: 'OTP sent to your email',
-        provider: emailResult.provider,
-      });
+      if (emailResult.skipped) {
+        res.status(200).json({
+          success: true,
+          message: 'Verification (Cloud Mode): Use the code displayed below.',
+          devOtp: otp,
+          provider: 'skipped'
+        });
+      } else {
+        res.status(200).json({
+          success: true,
+          message: 'OTP sent to your email',
+          provider: emailResult.provider,
+        });
+      }
     } else {
       // Email failed - return OTP for manual entry (fallback)
       console.log(`[EMAIL FALLBACK] Login email failed, returning OTP for ${user.email}: ${otp}`);
