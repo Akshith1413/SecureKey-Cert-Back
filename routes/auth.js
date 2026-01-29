@@ -44,7 +44,7 @@ const sendEmail = async (to, subject, html) => {
           to_email: to,
           to_name: to.split('@')[0], // Use part of email as name since we don't pass name to this helper
           otp: otpCode,
-          app_name: "SCKLMS",
+          app_name: "STCIMP",
           expiry_minutes: "10",
           // Keep these just in case other templates use them:
           subject: subject,
@@ -69,7 +69,7 @@ const sendEmail = async (to, subject, html) => {
     try {
       console.log(`[SMTP DEBUG] Attempting SMTP send to ${to} via ${process.env.EMAIL_HOST}`);
       await transporter.sendMail({
-        from: process.env.EMAIL_FROM || '"SCKLMS Security" <noreply@scklms.com>',
+        from: process.env.EMAIL_FROM || '"ST-CIMP Security" <noreply@stcimp.com>',
         to: to,
         subject: subject,
         html: html,
@@ -118,7 +118,7 @@ router.post('/mfa/email/send', protect, async (req, res) => {
     const emailHtml = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <h2 style="color: #00bcd4;">Security Verification</h2>
-        <p>Your verification code for SCKLMS is:</p>
+        <p>Your verification code for ST-CIMP is:</p>
         <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; text-align: center; font-size: 24px; font-weight: bold; letter-spacing: 5px; margin: 20px 0;">
           ${otp}
         </div>
@@ -128,7 +128,7 @@ router.post('/mfa/email/send', protect, async (req, res) => {
     `;
 
     // Send email using Nodemailer with hybrid fallback
-    const emailResult = await sendEmail(user.email, 'Your SCKLMS Verification Code', emailHtml);
+    const emailResult = await sendEmail(user.email, 'Your STCIMP Verification Code', emailHtml);
 
     if (emailResult.success) {
       // If skipped (cloud), show specific message
@@ -258,7 +258,7 @@ router.post('/mfa/email/login-send', async (req, res) => {
     const emailHtml = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <h2 style="color: #00bcd4;">Login Verification</h2>
-        <p>Your login verification code for SCKLMS is:</p>
+        <p>Your login verification code for ST-CIMP is:</p>
         <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; text-align: center; font-size: 24px; font-weight: bold; letter-spacing: 5px; margin: 20px 0;">
           ${otp}
         </div>
@@ -268,7 +268,7 @@ router.post('/mfa/email/login-send', async (req, res) => {
     `;
 
     // Send email using Nodemailer with hybrid fallback
-    const emailResult = await sendEmail(user.email, 'Your SCKLMS Login Verification Code', emailHtml);
+    const emailResult = await sendEmail(user.email, 'Your ST-CIMP Login Verification Code', emailHtml);
 
     if (emailResult.success) {
       if (emailResult.skipped) {
@@ -534,7 +534,7 @@ router.post('/login', async (req, res) => {
     user.lockoutUntil = null;
     await user.save();
 
-    // TEMPORARY: Bypass MFA check as requested by user
+    // TEMPORARY: Bypass MFA check 
     /* 
     if (user.mfaEnabled) {
       return res.status(200).json({
@@ -590,8 +590,8 @@ router.post('/mfa/setup', protect, async (req, res) => {
     const user = await User.findById(req.user._id);
 
     const secret = speakeasy.generateSecret({
-      name: `SCKLMS (${user.email})`,
-      issuer: 'SCKLMS',
+      name: `STCIMP (${user.email})`,
+      issuer: 'STCIMP',
       length: 32,
     });
 

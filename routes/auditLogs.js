@@ -53,6 +53,77 @@ router.get('/', protect, checkPermission('view_audit_logs'), async (req, res) =>
   }
 });
 
+// @route   GET /api/audit-logs/export
+// @desc    Export audit logs
+// @access  Private
+router.get('/export', protect, authorize('auditor', 'security_authority'), async (req, res) => {
+  try {
+    const { action, severity, resourceType, startDate, endDate } = req.query;
+
+    let query = {};
+
+    if (action) {
+      query.action = action;
+    }
+    if (severity) {
+      query.severity = severity;
+    }
+    if (resourceType) {
+      query.resourceType = resourceType;
+    }
+    if (startDate && endDate) {
+      query.createdAt = {
+        $gte: new Date(startDate),
+        $lte: new Date(endDate),
+      };
+    }
+
+    const logs = await AuditLog.find(query).populate('userId', 'firstName lastName email role');
+
+    // Convert to CSV format
+    const csvHeader = [
+      'Timestamp',
+      'User',
+      'Action',
+      'Resource Type',
+      'Resource Name',
+      'Status',
+      'Severity',
+      'Description',
+    ];
+
+    const csvRows = logs.map((log) => [
+      log.createdAt.toISOString(),
+      log.userName,
+      log.action,
+      log.resourceType,
+      log.resourceName,
+      log.status,
+      log.severity,
+      log.description,
+    ]);
+
+    const csvContent = [csvHeader, ...csvRows].map((row) => row.map((cell) => `"${cell}"`).join(',')).join('\n');
+
+    await logAudit(req, res, {
+      action: 'EXPORT_AUDIT_LOG',
+      resourceType: 'AuditLog',
+      description: `User exported ${logs.length} audit logs`,
+      severity: 'medium',
+    });
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename=audit-logs.csv');
+    res.send(csvContent);
+  } catch (error) {
+    console.error('[EXPORT AUDIT LOGS ERROR]', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to export audit logs',
+    });
+  }
+});
+
 // @route   GET /api/audit-logs/:id
 // @desc    Get single audit log
 // @access  Private
@@ -140,77 +211,6 @@ router.get('/resource/:resourceType/:resourceId', protect, authorize('auditor', 
     res.status(500).json({
       success: false,
       message: 'Failed to fetch resource audit logs',
-    });
-  }
-});
-
-// @route   GET /api/audit-logs/export
-// @desc    Export audit logs
-// @access  Private
-router.get('/export', protect, authorize('auditor', 'security_authority'), async (req, res) => {
-  try {
-    const { action, severity, resourceType, startDate, endDate } = req.query;
-
-    let query = {};
-
-    if (action) {
-      query.action = action;
-    }
-    if (severity) {
-      query.severity = severity;
-    }
-    if (resourceType) {
-      query.resourceType = resourceType;
-    }
-    if (startDate && endDate) {
-      query.createdAt = {
-        $gte: new Date(startDate),
-        $lte: new Date(endDate),
-      };
-    }
-
-    const logs = await AuditLog.find(query).populate('userId', 'firstName lastName email role');
-
-    // Convert to CSV format
-    const csvHeader = [
-      'Timestamp',
-      'User',
-      'Action',
-      'Resource Type',
-      'Resource Name',
-      'Status',
-      'Severity',
-      'Description',
-    ];
-
-    const csvRows = logs.map((log) => [
-      log.createdAt.toISOString(),
-      log.userName,
-      log.action,
-      log.resourceType,
-      log.resourceName,
-      log.status,
-      log.severity,
-      log.description,
-    ]);
-
-    const csvContent = [csvHeader, ...csvRows].map((row) => row.map((cell) => `"${cell}"`).join(',')).join('\n');
-
-    await logAudit(req, res, {
-      action: 'EXPORT_AUDIT_LOG',
-      resourceType: 'AuditLog',
-      description: `User exported ${logs.length} audit logs`,
-      severity: 'medium',
-    });
-
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', 'attachment; filename=audit-logs.csv');
-    res.send(csvContent);
-  } catch (error) {
-    console.error('[EXPORT AUDIT LOGS ERROR]', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to export audit logs',
     });
   }
 });
