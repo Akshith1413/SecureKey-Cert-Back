@@ -534,6 +534,8 @@ router.post('/login', async (req, res) => {
     user.lockoutUntil = null;
     await user.save();
 
+    // TEMPORARY: Bypass MFA check as requested by user
+    /* 
     if (user.mfaEnabled) {
       return res.status(200).json({
         success: true,
@@ -543,6 +545,7 @@ router.post('/login', async (req, res) => {
         userId: user._id,
       });
     }
+    */
 
     user.lastLogin = new Date();
     await user.save();
